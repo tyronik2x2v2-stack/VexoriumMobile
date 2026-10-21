@@ -34,7 +34,10 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final String SERVER_ADDRESS = "ams-game-02.centnodes.net:40065";
-    private static final String CLIENT_GUIDE_URL = "https://github.com/SA-MP-Android/App/releases/latest";
+    private static final String CLIENT_GUIDE_URL = "https://play.google.com/store/apps/details?id=ro.alynsampmobile.launcher";
+    private static final String PREFERRED_CLIENT_PACKAGE = "ro.alynsampmobile.launcher";
+    private static final String GTA_PACKAGE = "com.rockstargames.gtasa";
+    private static final String GTA_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.rockstargames.gtasa";
     private static final String PREFS = "vexorium_mobile_settings";
     private static final int BG = Color.rgb(8, 9, 14);
     private static final int PANEL = Color.rgb(20, 22, 32);
@@ -43,6 +46,8 @@ public final class MainActivity extends Activity {
     private static final int WHITE = Color.rgb(244, 246, 250);
     private static final int MUTED = Color.rgb(157, 164, 181);
     private EditText nicknameInput;
+    private TextView gtaInstallStatus;
+    private TextView gtaInstallButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +56,12 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
         setContentView(buildScreen());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshGtaInstallState();
     }
 
     private View buildScreen() {
@@ -125,6 +136,23 @@ public final class MainActivity extends Activity {
         serverCard.addView(status);
         page.addView(serverCard);
 
+        // Official GTA San Andreas installation is handled by Google Play.
+        // The Play Store does not expose its live download percentage/ETA to third-party apps.
+        LinearLayout gtaCard = card();
+        TextView gtaHeading = text("GTA SAN ANDREAS", 16, WHITE, true);
+        gtaCard.addView(gtaHeading);
+        gtaInstallStatus = text("Проверяем, установлена ли игра...", 12, MUTED, false);
+        gtaInstallStatus.setPadding(0, dp(8), 0, dp(12));
+        gtaCard.addView(gtaInstallStatus);
+        gtaInstallButton = pillButton("УСТАНОВИТЬ GTA SAN ANDREAS", RED, WHITE);
+        gtaCard.addView(gtaInstallButton, new LinearLayout.LayoutParams(-1, dp(50)));
+        gtaInstallButton.setOnClickListener(v -> openGtaInGooglePlay());
+        TextView gtaHint = text("Загрузка и установка выполняются в Google Play. Там отображаются процент и примерное оставшееся время. После установки вернись в VEXORIUM MOBILE — приложение проверит результат.", 10, MUTED, false);
+        gtaHint.setPadding(0, dp(10), 0, 0);
+        gtaCard.addView(gtaHint);
+        page.addView(gtaCard, params(0, -2, 14, 0));
+        refreshGtaInstallState();
+
         LinearLayout profileCard = card();
         TextView nickLabel = text("ТВОЙ ИГРОВОЙ НИК", 10, MUTED, true);
         nickLabel.setLetterSpacing(0.06f);
@@ -167,10 +195,53 @@ public final class MainActivity extends Activity {
         note.setPadding(dp(8), dp(20), dp(8), dp(12));
         page.addView(note);
 
-        TextView footer = text("VEXORIUM MOBILE  •  ПРЕДВАРИТЕЛЬНАЯ ВЕРСИЯ 1.0", 9, Color.rgb(97, 102, 117), true);
+        TextView footer = text("VEXORIUM MOBILE  •  КРОССПЛЕЙ-ТЕСТ 1.2", 9, Color.rgb(97, 102, 117), true);
         footer.setGravity(Gravity.CENTER);
         page.addView(footer);
         return scroll;
+    }
+
+    private boolean isOfficialGtaInstalled() {
+        try {
+            getPackageManager().getApplicationInfo(GTA_PACKAGE, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException notInstalled) {
+            return false;
+        }
+    }
+
+    private void refreshGtaInstallState() {
+        if (gtaInstallStatus == null || gtaInstallButton == null) return;
+
+        if (isOfficialGtaInstalled()) {
+            gtaInstallStatus.setText("✓ ОФИЦИАЛЬНАЯ GTA SAN ANDREAS УСТАНОВЛЕНА");
+            gtaInstallStatus.setTextColor(Color.rgb(91, 220, 142));
+            gtaInstallButton.setVisibility(View.GONE);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("gtaInstallStarted", false).apply();
+        } else {
+            boolean previouslyOpenedStore = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getBoolean("gtaInstallStarted", false);
+            gtaInstallStatus.setText(previouslyOpenedStore
+                    ? "Игра пока не обнаружена. Проверь ход загрузки в Google Play. После завершения установки вернись сюда."
+                    : "GTA San Andreas не найдена на этом телефоне.");
+            gtaInstallStatus.setTextColor(MUTED);
+            gtaInstallButton.setVisibility(View.VISIBLE);
+            gtaInstallButton.setText(previouslyOpenedStore
+                    ? "СНОВА ОТКРЫТЬ GOOGLE PLAY"
+                    : "УСТАНОВИТЬ GTA SAN ANDREAS");
+        }
+    }
+
+    private void openGtaInGooglePlay() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("gtaInstallStarted", true).apply();
+        Uri marketUri = Uri.parse("market://details?id=" + GTA_PACKAGE);
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, marketUri));
+        } catch (Exception noPlayStore) {
+            openUrl(GTA_PLAY_STORE_URL);
+        }
+        Toast.makeText(this, "Google Play откроет официальную страницу GTA San Andreas. Вернись сюда после установки.", Toast.LENGTH_LONG).show();
+        refreshGtaInstallState();
     }
 
     private void copyServerAddress() {
@@ -181,8 +252,26 @@ public final class MainActivity extends Activity {
 
     private void openMobileClient() {
         hideKeyboard();
-        List<ApplicationInfo> apps = new ArrayList<>();
         PackageManager pm = getPackageManager();
+
+        // Prefer Alyn SA-MP Mobile, a third-party Android client that supports SA-MP 0.3.7.
+        // We do not bundle the GTA game or the third-party client's code.
+        Intent preferred = pm.getLaunchIntentForPackage(PREFERRED_CLIENT_PACKAGE);
+        if (preferred != null) {
+            copyServerAddress();
+            try {
+                preferred.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(preferred);
+                Toast.makeText(this,
+                        "Адрес сервера скопирован. В Alyn добавь его через Current Server → + → IP/Port → Check & Add.",
+                        Toast.LENGTH_LONG).show();
+            } catch (Exception ex) {
+                showClientLaunchError(ex);
+            }
+            return;
+        }
+
+        List<ApplicationInfo> apps = new ArrayList<>();
         try {
             for (ApplicationInfo info : pm.getInstalledApplications(PackageManager.GET_META_DATA)) {
                 if (info.packageName.equals(getPackageName())) continue;
@@ -196,37 +285,42 @@ public final class MainActivity extends Activity {
             }
         } catch (Exception ignored) { }
 
-        Collections.sort(apps, Comparator.comparing(a -> String.valueOf(pm.getApplicationLabel(a)).toLowerCase(Locale.ROOT)));
-        if (apps.isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Мобильный клиент не найден")
-                    .setMessage("На телефоне не обнаружен установленный SA-MP-клиент. Этот лаунчер не включает GTA San Andreas и не скачивает игровые файлы. Установи совместимый клиент только из источника, которому доверяешь, и используй свою законно приобретённую копию игры. После установки нажми эту кнопку снова.\n\nВ клиенте может понадобиться вручную добавить сервер: " + SERVER_ADDRESS)
-                    .setNegativeButton("Назад", null)
-                    .setPositiveButton("Открыть страницу проекта", (dialog, which) -> openUrl(CLIENT_GUIDE_URL))
-                    .show();
-            return;
-        }
-
         if (apps.size() == 1) {
             launchClient(apps.get(0));
             return;
         }
-        String[] labels = new String[apps.size()];
-        for (int i = 0; i < apps.size(); i++) labels[i] = String.valueOf(pm.getApplicationLabel(apps.get(i)));
+        if (apps.size() > 1) {
+            Collections.sort(apps, Comparator.comparing(a -> String.valueOf(pm.getApplicationLabel(a)).toLowerCase(Locale.ROOT)));
+            String[] labels = new String[apps.size()];
+            for (int i = 0; i < apps.size(); i++) labels[i] = String.valueOf(pm.getApplicationLabel(apps.get(i)));
+            new AlertDialog.Builder(this)
+                    .setTitle("Выбери мобильный клиент")
+                    .setMessage("Адрес VEXORIUM будет скопирован в буфер обмена. В выбранном клиенте может потребоваться добавить его вручную.")
+                    .setItems(labels, (dialog, which) -> {
+                        copyServerAddress();
+                        launchClient(apps.get(which));
+                    })
+                    .setNegativeButton("Отмена", null)
+                    .show();
+            return;
+        }
+
         new AlertDialog.Builder(this)
-                .setTitle("Выбери мобильный клиент")
-                .setItems(labels, (dialog, which) -> launchClient(apps.get(which)))
-                .setNegativeButton("Отмена", null)
+                .setTitle("Нужен игровой клиент")
+                .setMessage("VEXORIUM MOBILE — это лаунчер, а не сама GTA. Чтобы бегать по игровому миру и подключаться к серверу, установи совместимый SA-MP-клиент для Android и используй собственные законно полученные файлы игры.\n\nРекомендуемый вариант: Alyn SA-MP Mobile из Google Play. После установки нажми «Открыть мобильный клиент», добавь сервер ams-game-02.centnodes.net:40065 через Current Server → + → IP/Port → Check & Add. Совместимость конкретных функций VEXORIUM нужно проверить в игре.")
+                .setNegativeButton("Позже", null)
+                .setPositiveButton("Открыть Google Play", (dialog, which) -> openUrl(CLIENT_GUIDE_URL))
                 .show();
     }
 
     private void launchClient(ApplicationInfo info) {
         try {
+            copyServerAddress();
             Intent launch = getPackageManager().getLaunchIntentForPackage(info.packageName);
             if (launch == null) throw new IllegalStateException("У приложения нет экрана запуска.");
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(launch);
-            Toast.makeText(this, "Клиент открыт. При необходимости добавь IP: " + SERVER_ADDRESS, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Клиент открыт; адрес скопирован. Добавь " + SERVER_ADDRESS + " в список серверов, если он ещё не добавлен.", Toast.LENGTH_LONG).show();
         } catch (Exception ex) {
             new AlertDialog.Builder(this)
                     .setTitle("Не удалось открыть клиент")
@@ -239,14 +333,22 @@ public final class MainActivity extends Activity {
     private void showGuide() {
         new AlertDialog.Builder(this)
                 .setTitle("Как подключиться к VEXORIUM")
-                .setMessage("1. Установи совместимый SA-MP-клиент для Android из доверенного источника.\n\n"
-                        + "2. Подготовь собственные игровые файлы GTA San Andreas, если клиент их требует.\n\n"
-                        + "3. Введи ник в VEXORIUM MOBILE.\n\n"
-                        + "4. Нажми «Копировать» рядом с адресом сервера.\n\n"
-                        + "5. Открой мобильный клиент и добавь сервер " + SERVER_ADDRESS + ".\n\n"
-                        + "Автоматическая передача адреса в сторонний клиент пока не настроена: формат интеграции зависит от конкретного клиента.")
+                .setMessage("1. Установи Alyn SA-MP Mobile из Google Play или используй другой клиент, которому доверяешь. Это сторонний, неофициальный клиент; совместимость VEXORIUM нужно проверить.\n\n"
+                        + "2. Используй собственную законно полученную копию GTA San Andreas и следуй инструкциям клиента по подготовке игровых файлов.\n\n"
+                        + "3. Введи ник в VEXORIUM MOBILE. Используй тот ник, под которым хочешь играть.\n\n"
+                        + "4. Нажми «Копировать» или «Открыть мобильный клиент» — адрес " + SERVER_ADDRESS + " попадёт в буфер обмена.\n\n"
+                        + "5. В Alyn открой Current Server → +, укажи адрес сервера и порт 40065, затем нажми Check & Add. Выбери сервер и запусти игру.\n\n"
+                        + "6. На ПК подключись к тому же адресу через SA-MP. Проверим, что игроки видят друг друга и что основные меню/интерьеры работают на Android.")
                 .setNegativeButton("Закрыть", null)
-                .setPositiveButton("Страница клиента", (dialog, which) -> openUrl(CLIENT_GUIDE_URL))
+                .setPositiveButton("Открыть Google Play", (dialog, which) -> openUrl(CLIENT_GUIDE_URL))
+                .show();
+    }
+
+    private void showClientLaunchError(Exception ex) {
+        new AlertDialog.Builder(this)
+                .setTitle("Не удалось открыть клиент")
+                .setMessage("Открой SA-MP Mobile вручную. Адрес VEXORIUM: " + SERVER_ADDRESS + "\n\n" + ex.getMessage())
+                .setPositiveButton("Понятно", null)
                 .show();
     }
 
